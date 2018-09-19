@@ -1,6 +1,7 @@
-use nom::IResult;
+use nom::{IResult, simple_errors};
 use std::fmt;
 use std::str;
+use std::error;
 
 use compound_select::{compound_selection, CompoundSelectStatement};
 use create::{creation, view_creation, CreateTableStatement, CreateViewStatement};
@@ -54,18 +55,42 @@ named!(sql_query<&[u8], SqlQuery>,
     )
 );
 
-pub fn parse_query_bytes<T>(input: T) -> Result<SqlQuery, &'static str>
-    where T: AsRef<[u8]> {
-    match sql_query(input.as_ref()) {
-        IResult::Done(_, o) => Ok(o),
-        IResult::Error(_) => Err("failed to parse query"),
-        IResult::Incomplete(_) => unreachable!(),
+#[derive(Debug)]
+pub struct ParseError<T: AsRef<[u8]>> {
+    input_bytes: T,
+    cause: Option<simple_errors::Err>
+}
+
+impl<T: AsRef<[u8]>> fmt::Display for ParseError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.cause.is_some() {
+            write!(f, "A parse error occured")
+        } else {
+            write!(f, "Parse failed for an unknown reason. This is a bug.")
+        }
     }
 }
 
-pub fn parse_query<T>(input: T) -> Result<SqlQuery, &'static str>
+impl<T: AsRef<[u8]> + fmt::Debug> error::Error for ParseError<T> {
+    fn cause(&self) -> Option<&error::Error> {
+        if let Some(ref cause) = self.cause { Some(cause) } else { None }
+    }
+}
+
+pub fn parse_query_bytes<T>(input: T) -> Result<SqlQuery, ParseError<T>>
+    where T: AsRef<[u8]> {
+    match sql_query(input.as_ref()) {
+        IResult::Done(_, o) => Ok(o),
+        IResult::Error(err) =>
+            Err(ParseError{ cause: Some(err), input_bytes: input}),
+        IResult::Incomplete(_) =>
+            Err(ParseError{ cause: None, input_bytes: input }),
+    }
+}
+
+pub fn parse_query<T>(input: T) -> Result<SqlQuery, ParseError<Vec<u8>>>
     where T: AsRef<str> {
-    parse_query_bytes(input.as_ref().trim().as_bytes())
+    parse_query_bytes(input.as_ref().trim().as_bytes().to_vec())
 }
 
 #[cfg(test)]
